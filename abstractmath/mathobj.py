@@ -61,10 +61,10 @@ class MathObject:
             else:
                 current_token.append(c)
 
-    def mul(self, b):
+    def __mul__(self, b):
         return Product(self, b)
 
-    def add(self, b):
+    def __add__(self, b):
         return Sum(self, b)
 
     def iter_subfactors(self):
@@ -165,9 +165,9 @@ class Product(MathObject, CommutativeMixin):
 
     def expand(self):
         if isinstance(self.a, Sum):
-            return self.a.a.mul(self.b).add(self.a.b.mul(self.b))
+            return self.a.a * self.b + self.a.b * self.b
         elif isinstance(self.b, Sum):
-            return self.b.a.mul(self.a).add(self.b.b.mul(self.a))
+            return self.b.a * self.a + self.b.b * self.a
         else:
             return self
 
