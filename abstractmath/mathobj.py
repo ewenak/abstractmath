@@ -9,31 +9,57 @@ def flatten_associative(kind, *nodes):
 
 
 class MathObject:
+    operation_types = {}
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+
+        if hasattr(cls, 'operator'):
+            MathObject.operation_types[cls.operator] = cls
+
     @classmethod
     def parse(cls, string):
         tokens = cls.tokenize(string)
         obj_stack = []
         for token in tokens:
             if token == '(':
-                obj_type = {
-                    '*': Product,
-                    '+': Sum,
-                    '^': Power,
-                }[next(tokens)]
+                key = next(tokens, None)
+                if key is None:
+                    raise SyntaxError(
+                        'expected operation after (, not EOF'
+                    )
+                obj_type = MathObject.operation_types.get(key)
+                if obj_type is None:
+                    raise SyntaxError(f'unknown operation: {key!r}')
                 obj_stack.append((obj_type, []))
             elif token == ')':
+                if not obj_stack:
+                    raise SyntaxError('Unexpected )')
                 obj_type, args = obj_stack.pop()
+                try:
+                    obj = obj_type(*args)
+                except (TypeError, ValueError):
+                    raise SyntaxError(
+                        f'Incorrect arguments for obj: {args}'
+                    ) from None
                 if obj_stack:
-                    obj_stack[-1][1].append(obj_type(*args))
+                    obj_stack[-1][1].append(obj)
                 else:
-                    return obj_type(*args)
+                    if next(tokens, None) is not None:
+                        raise SyntaxError('Expected EOF after )')
+                    return obj
             elif token.startswith(':'):
                 obj_stack[-1][1].append(Variable(token[1:]))
             elif '0' < token[0] < '9' or token[0] == '-':
-                obj_stack[-1][1].append(Number(int(token)))
+                try:
+                    obj_stack[-1][1].append(Number(int(token)))
+                except ValueError:
+                    raise SyntaxError(
+                        f'Was expecting integer after {token[0]!r}'
+                    ) from None
             else:
                 raise SyntaxError(
-                    f"Invalid token: {token} (shouldn't have happened)"
+                    f"Invalid token: {token!r} (shouldn't have happened)"
                 )
         raise SyntaxError("Unclosed parentheses")
 
@@ -103,6 +129,8 @@ class CommutativeMixin:
 
 
 class Sum(CommutativeMixin, MathObject):
+    operator = '+'
+
     def simplify(self):
         a = self.a.simplify()
         b = self.b.simplify()
@@ -133,6 +161,8 @@ class Sum(CommutativeMixin, MathObject):
 
 
 class Product(MathObject, CommutativeMixin):
+    operator = '*'
+
     def simplify(self):
         a = self.a.simplify()
         b = self.b.simplify()
@@ -160,7 +190,6 @@ class Product(MathObject, CommutativeMixin):
                 a = b
             else:
                 a = Product(a, b)
-        print(f'simplified {self} to {a}')
         return a
 
     def expand(self):
@@ -184,6 +213,8 @@ class Product(MathObject, CommutativeMixin):
 
 
 class Power(MathObject):
+    operator = '^'
+
     def __init__(self, base, exponent):
         self._base = base
         self._exponent = exponent
