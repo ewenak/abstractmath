@@ -10,11 +10,12 @@ def flatten_associative(kind, *nodes):
 
 class MathObject:
     operation_types = {}
+    operator = None
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
 
-        if hasattr(cls, 'operator'):
+        if getattr(cls, 'operator', None) is not None:
             MathObject.operation_types[cls.operator] = cls
 
     @classmethod
@@ -50,7 +51,7 @@ class MathObject:
                     return obj
             elif token.startswith(':'):
                 obj_stack[-1][1].append(Variable(token[1:]))
-            elif '0' < token[0] < '9' or token[0] == '-':
+            elif '0' <= token[0] <= '9' or token[0] == '-':
                 try:
                     obj_stack[-1][1].append(Number(int(token)))
                 except ValueError:
@@ -87,11 +88,51 @@ class MathObject:
             else:
                 current_token.append(c)
 
+    @classmethod
+    def fromobj(cls, obj):
+        if isinstance(obj, MathObject):
+            return obj
+        elif isinstance(obj, int):
+            return Number(obj)
+        elif isinstance(obj, str):
+            try:
+                return MathObject.parse(obj)
+            except SyntaxError:
+                return Variable(obj)
+        raise TypeError(f'Unknown object type: {type(obj)}')
+
     def __mul__(self, b):
         return Product(self, b)
 
+    def __rmul__(self, a):
+        return Product(a, self)
+
     def __add__(self, b):
         return Sum(self, b)
+
+    def __radd__(self, a):
+        return Sum(a, self)
+
+    def __truediv__(self, b):
+        return Product(self, MathObject.fromobj(b) ** -1)
+
+    def __rtruediv__(self, a):
+        return Product(a, self ** -1)
+
+    def __sub__(self, b):
+        return Sum(self, -MathObject.fromobj(b))
+
+    def __rsub__(self, a):
+        return Sum(a, -self)
+
+    def __neg__(self):
+        return Product(-1, self)
+
+    def __pow__(self, exponent):
+        return Power(self, exponent)
+
+    def __rpow__(self, base):
+        return Power(base, self)
 
     def iter_subfactors(self):
         yield self
@@ -107,8 +148,8 @@ class MathObject:
 
 class CommutativeMixin:
     def __init__(self, a: MathObject, b: MathObject):
-        self._a = a
-        self._b = b
+        self._a = MathObject.fromobj(a)
+        self._b = MathObject.fromobj(b)
 
     @property
     def a(self):
@@ -216,8 +257,8 @@ class Power(MathObject):
     operator = '^'
 
     def __init__(self, base, exponent):
-        self._base = base
-        self._exponent = exponent
+        self._base = MathObject.fromobj(base)
+        self._exponent = MathObject.fromobj(exponent)
 
     @property
     def base(self):
@@ -241,13 +282,21 @@ class Power(MathObject):
 
 class Number(MathObject):
     def __init__(self, value: int, *, rational: bool = True):
-        self.rational = rational
+        self._rational = rational
         if isinstance(value, Number):
-            self.value = value.value
+            self._value = value.value
         elif isinstance(value, int):
-            self.value = value
+            self._value = value
         else:
             raise TypeError('only int type is supported for numbers as of now')
+
+    @property
+    def rational(self):
+        return self._rational
+
+    @property
+    def value(self):
+        return self._value
 
     def __eq__(self, other):
         if isinstance(other, int):
@@ -267,7 +316,11 @@ class Number(MathObject):
 
 class Variable(MathObject):
     def __init__(self, symbol: str):
-        self.symbol = symbol
+        self._symbol = symbol
+
+    @property
+    def symbol(self):
+        return self._symbol
 
     def __eq__(self, other):
         if not isinstance(other, Variable):
