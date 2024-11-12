@@ -1,11 +1,6 @@
 #! /usr/bin/env python3
 
-def flatten_associative(kind, *nodes):
-    for el in nodes:
-        if isinstance(el, kind):
-            yield from el.iter_factors()
-        else:
-            yield el
+from collections import Counter
 
 
 class MathObject:
@@ -140,13 +135,18 @@ class MathObject:
     def simplify(self):
         return self
 
+    def iter_nodes(self):
+        # Empty generator
+        return
+        yield
+
     def __repr__(self):
         return f"""{self.__class__.__name__}.parse(
     {str(self)!r}
 )"""
 
 
-class CommutativeMixin:
+class BinaryOperation(MathObject):
     def __init__(self, a: MathObject, b: MathObject):
         self._a = MathObject.fromobj(a)
         self._b = MathObject.fromobj(b)
@@ -159,6 +159,10 @@ class CommutativeMixin:
     def b(self):
         return self._b
 
+    def iter_nodes(self):
+        yield self.a
+        yield self.b
+
     def __hash__(self):
         return hash(tuple(sorted((hash(self.a), hash(self.b)))))
 
@@ -169,7 +173,26 @@ class CommutativeMixin:
                 or (self.a == other.b and self.b == other.a))
 
 
-class Sum(CommutativeMixin, MathObject):
+class CommutativeAssociativeOperation(BinaryOperation):
+    def iter_nodes(self):
+        for node in (self.a, self.b):
+            if isinstance(node, type(self)):
+                yield from node.iter_nodes()
+            else:
+                yield node
+
+    def __hash__(self):
+        return hash(tuple(sorted(
+            hash(x) for x in self.iter_nodes()
+        )))
+
+    def __eq__(self, other):
+        if not isinstance(other, type(self)):
+            return NotImplemented
+        return Counter(self.iter_nodes()) == Counter(other.iter_nodes())
+
+
+class Sum(CommutativeAssociativeOperation):
     operator = '+'
 
     def simplify(self):
@@ -201,7 +224,7 @@ class Sum(CommutativeMixin, MathObject):
         return f'(+ {self.a} {self.b})'
 
 
-class Product(MathObject, CommutativeMixin):
+class Product(CommutativeAssociativeOperation):
     operator = '*'
 
     def simplify(self):
@@ -213,7 +236,7 @@ class Product(MathObject, CommutativeMixin):
         ):
             return Number(a.value * b.value)
         factor_counter = {}
-        for el in flatten_associative(Product, a, b):
+        for el in self.iter_nodes():
             if (isinstance(el, Power) and isinstance(el.exponent, Number)
                     and el.exponent.rational):
                 factor_counter[el.base] = (factor_counter.get(el.base, 0)
@@ -240,9 +263,6 @@ class Product(MathObject, CommutativeMixin):
             return self.b.a * self.a + self.b.b * self.a
         else:
             return self
-
-    def iter_factors(self):
-        return flatten_associative(Product, self.a, self.b)
 
     def iter_subfactors(self):
         yield self
