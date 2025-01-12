@@ -1,6 +1,25 @@
 #! /usr/bin/env python3
 
 from collections import Counter
+from math import prod
+
+_UNSET = object()
+
+
+def as_binary_tree(iterable, element_type, default=_UNSET):
+    iterable = iter(iterable)
+
+    try:
+        a = next(iterable)
+    except StopIteration:
+        if default is _UNSET:
+            raise TypeError('as_binary_tree of empty iterable with no default '
+                            'value') from None
+        return default
+
+    for b in iterable:
+        a = element_type(a, b)
+    return a
 
 
 class MathObject:
@@ -135,10 +154,11 @@ class MathObject:
     def simplify(self):
         return self
 
-    def iter_nodes(self):
-        # Empty generator
-        return
-        yield
+    def iter_nodes(self, *, simplify=False):
+        if simplify:
+            yield self.simplify()
+        else:
+            yield self
 
     def __repr__(self):
         return f"""{self.__class__.__name__}.parse(
@@ -159,9 +179,13 @@ class BinaryOperation(MathObject):
     def b(self):
         return self._b
 
-    def iter_nodes(self):
-        yield self.a
-        yield self.b
+    def iter_nodes(self, *, simplify=False):
+        if simplify:
+            yield self.a.simplify()
+            yield self.b.simplify()
+        else:
+            yield self.a
+            yield self.b
 
     def __hash__(self):
         return hash(tuple(sorted((hash(self.a), hash(self.b)))))
@@ -174,12 +198,29 @@ class BinaryOperation(MathObject):
 
 
 class CommutativeAssociativeOperation(BinaryOperation):
-    def iter_nodes(self):
-        for node in (self.a, self.b):
+    def iter_nodes(self, *, simplify=False):
+        if not simplify:
+            nodes = (self.a, self.b)
+        else:
+            nodes = (self.a.simplify(), self.b.simplify())
+
+        for node in nodes:
             if isinstance(node, type(self)):
-                yield from node.iter_nodes()
+                yield from node.iter_nodes(simplify=simplify)
             else:
                 yield node
+
+    def separate_numbers_and_nodes(self):
+        numbers = []
+        nodes = []
+        for node in self.iter_nodes(simplify=True):
+            n = node.simplify()
+            if isinstance(n, Number) and n.rational:
+                numbers.append(n.value)
+            else:
+                nodes.append(n)
+
+        return numbers, nodes
 
     def __hash__(self):
         return hash(tuple(sorted(
@@ -196,11 +237,21 @@ class Sum(CommutativeAssociativeOperation):
     operator = '+'
 
     def simplify(self):
-        a = self.a.simplify()
-        b = self.b.simplify()
-        if isinstance(a, Number) and isinstance(b, Number):
-            return Number(a.value + b.value)
-        return Sum(a, b)
+        numbers, terms = self.separate_numbers_and_nodes()
+        term_count = {Number(1): sum(numbers)}
+
+        for term in terms:
+            if isinstance(term, Product):
+                numbers, factors = term.separate_numbers_and_nodes()
+                f = as_binary_tree(factors, Product)
+                term_count[f] = term_count.get(f, 0) + prod(numbers)
+            else:
+                term_count[term] = term_count.get(term, 0) + 1
+
+        final_terms = (t if m == 1 else Product(m, t).simplify()
+                       for t, m in term_count.items()
+                       if m != 0)
+        return as_binary_tree(final_terms, Sum, default=Number(0))
 
     def iter_subfactors(self):
         yield self
@@ -228,33 +279,32 @@ class Product(CommutativeAssociativeOperation):
     operator = '*'
 
     def simplify(self):
-        a = self.a.simplify()
-        b = self.b.simplify()
-        if (
-            isinstance(a, Number) and isinstance(b, Number)
-            and a.rational and b.rational
-        ):
-            return Number(a.value * b.value)
-        factor_counter = {}
-        for el in self.iter_nodes():
-            if (isinstance(el, Power) and isinstance(el.exponent, Number)
-                    and el.exponent.rational):
-                factor_counter[el.base] = (factor_counter.get(el.base, 0)
-                                           + el.exponent.value)
+        numbers, factors = self.separate_numbers_and_nodes()
+        factor_counter = {Number(prod(numbers)): 1}
+
+        for el in factors:
+            factor = el.simplify()
+
+            if factor == 0:
+                return factor
+
+            if (isinstance(factor, Power)
+                    and isinstance(factor.exponent, Number)
+                    and factor.exponent.rational):
+                factor_counter[factor.base] = (
+                    factor_counter.get(factor.base, 0)
+                    + factor.exponent.value
+                )
                 continue
-            factor_counter[el] = factor_counter.get(el, 0) + 1
-        factors = (a if power == 1 else
-                   Number(1) if power == 0 else Power(a, power)
-                   for a, power in factor_counter.items())
-        a = next(factors)
-        for b in factors:
-            if b == 1:
-                continue
-            elif a == 1:
-                a = b
-            else:
-                a = Product(a, b)
-        return a
+
+            factor_counter[factor] = factor_counter.get(factor, 0) + 1
+
+        factors = (
+            a if power == 1 else Number(1) if power == 0 else Power(a, power)
+            for a, power in factor_counter.items()
+            if power != 0 and a != 1
+        )
+        return as_binary_tree(factors, Product, Number(1))
 
     def expand(self):
         if isinstance(self.a, Sum):
@@ -287,6 +337,11 @@ class Power(MathObject):
     @property
     def exponent(self):
         return self._exponent
+
+    def simplify(self):
+        if isinstance(self.base, Number) and isinstance(self.exponent, Number):
+            return Number(self.base.value ** self.exponent.value)
+        return Power(self.base.simplify(), self.exponent.simplify())
 
     def __eq__(self, other):
         if not isinstance(other, Power):
