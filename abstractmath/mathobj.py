@@ -63,8 +63,8 @@ class MathObject:
                     if next(tokens, None) is not None:
                         raise SyntaxError('Expected EOF after )')
                     return obj
-            elif token.startswith(':'):
-                obj_stack[-1][1].append(Variable(token[1:]))
+            elif token[0].isalpha():
+                obj_stack[-1][1].append(Variable(token))
             elif '0' <= token[0] <= '9' or token[0] == '-':
                 try:
                     obj_stack[-1][1].append(Number(int(token)))
@@ -407,6 +407,6 @@ class Variable(MathObject):
 
     def __str__(self):
         if all('a' <= c <= 'z' or 'A' <= c <= 'Z' for c in self.symbol):
-            return f':{self.symbol}'
+            return f'{self.symbol}'
         else:
-            return f':{self.symbol!r}'
+            return f'{self.symbol!r}'
